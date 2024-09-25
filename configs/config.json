@@ -1,0 +1,50 @@
+{   
+    "network_config": {
+        "input_channels":601, 
+        "num_conv_layers":5, 
+        "kernel_size":4, 
+        "stride":1,
+        "num_attention_layers":5, 
+        "num_heads":8, 
+        "hidden_dim":512, 
+        "dropout":0.1
+    },
+    "train_config": {
+        "exp_path": "cleanspecnet",
+        "checkpoint_path": "./checkpoints/60000.pkl",
+        "log":{
+            "directory": "./logs_training",
+            "ckpt_iter": "max",
+            "iters_per_ckpt": 10000,
+            "iters_per_valid": 250
+        },
+        "optimization":{
+            "n_iters": 250000,
+            "learning_rate": 1e-4,
+            "betas": [0.9, 0.999],
+            "eps":1e-8,
+            "weight_decay": 1e-5,
+            "max_norm": 5,
+            "batch_size_per_gpu": 16
+        }
+    },
+    "trainset_config": {
+        "data_dir": "../DATASETS/LJSpeech-1.1/wavs",
+        "train_metadata": "./filelists/ljs_audio_text_train_filelist.txt",
+        "test_metadata": "./filelists/ljs_audio_text_val_filelist.txt",
+        "crop_length_sec": 3,
+        "sample_rate": 24000,
+        "n_fft": 1024, 
+        "hop_length": 256, 
+        "win_length": 1024,
+        "power": 1.0               
+    },
+    
+    "gen_config":{
+        "output_directory": "./exp"
+    },
+    "dist_config": {
+        "dist_backend": "nccl",
+        "dist_url": "tcp://localhost:54321"
+    }         
+}
