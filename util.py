@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from losses import MultiResolutionSTFTLoss
-
+from logger import Logger
 
 def flatten(v):
     return [x for y in v for x in y]
@@ -221,4 +221,48 @@ def loss_fn(net, X, ell_p, ell_p_lambda, stft_lambda, mrstftloss, **kwargs):
         output_dic["stft_mag"] = mag_loss.data * stft_lambda
 
     return loss, output_dic
+
+
+####################### training util #############################
+
+def prepare_directories_and_logger(output_dir, log_dir, ckpt_dir, rank):
+    if rank == 0:
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+            os.chmod(output_dir, 0o775)
+
+        if not os.path.isdir(log_dir):
+            os.makedirs(log_dir)
+            os.chmod(log_dir, 0o775)    
+
+        if not os.path.isdir(ckpt_dir):
+            os.makedirs(ckpt_dir)
+            os.chmod(ckpt_dir, 0o775)                        
+
+        logger = Logger(log_dir)
+    else:
+        logger = None
+    return logger
+
+
+def load_checkpoint(checkpoint_path, model, optimizer):
+    assert os.path.isfile(checkpoint_path)
+    print("Loading checkpoint '{}'".format(checkpoint_path))
+    checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
+    model.load_state_dict(checkpoint_dict['state_dict'])
+    optimizer.load_state_dict(checkpoint_dict['optimizer'])
+    learning_rate = checkpoint_dict['learning_rate']
+    iteration = checkpoint_dict['iteration']
+    print("Loaded checkpoint '{}' from iteration {}" .format(
+        checkpoint_path, iteration))
+    return model, optimizer, learning_rate, iteration
+
+
+def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
+    print("Saving model and optimizer state at iteration {} to {}".format(
+        iteration, filepath))
+    torch.save({'iteration': iteration,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'learning_rate': learning_rate}, filepath)
 

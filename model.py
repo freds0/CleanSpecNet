@@ -4,7 +4,7 @@ import numpy as np
 import math
 import torch.nn.functional as F
 from torch import Tensor
-from torch.nn import TransformerEncoderLayer
+#from torch.nn import TransformerEncoderLayer
 
 class AttentionBlock(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1):
@@ -40,77 +40,50 @@ class AttentionBlock(nn.Module):
 
 
 class CleanSpecNet(nn.Module):
-    def __init__(self, input_channels=601, num_conv_layers=5, kernel_size=4, stride=1, hidden_dim=512, num_attention_layers=5, num_heads=8, dropout=0.1):
+    def __init__(self, input_channels=513, num_conv_layers=5, kernel_size=4, stride=1, conv_hidden_dim=64, hidden_dim=512, num_attention_layers=5, num_heads=8, dropout=0.1):
         super(CleanSpecNet, self).__init__()
 
-        self.num_conv_layers = num_conv_layers
-        self.kernel_size = kernel_size
-        self.hidden_dim = hidden_dim
-
-        conv_hidden_dim = 601
-        conv_input_channels=601
-
-        #self.input_layer = nn.Conv1d(input_channels, conv_input_channels, kernel_size=3, stride=1, padding=1)
-        #self.input_fn = nn.LeakyReLU(0.1)
-
+        self.input_layer = nn.Conv1d(input_channels, input_channels, kernel_size=3, stride=1, padding=1)
         # Convolutional Layers
+        conv_input_channels = input_channels
         self.conv_layers = nn.ModuleList()
         for _ in range(num_conv_layers):
             self.conv_layers.append(nn.Sequential(
                 nn.Conv1d(conv_input_channels, conv_hidden_dim, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2),
-                #nn.BatchNorm1d(conv_hidden_dim),
-                nn.LeakyReLU(0.1),
-                nn.Dropout(0.1), 
+                nn.ReLU(),
                 nn.Conv1d(conv_hidden_dim, conv_hidden_dim * 2, kernel_size=kernel_size, stride=stride, padding=1),
-                #nn.BatchNorm1d(conv_hidden_dim * 2),
                 nn.GLU(dim=1)
             ))
             conv_input_channels = conv_hidden_dim
 
         self.tsfm_projection = nn.Linear(conv_hidden_dim, hidden_dim)
 
-        #self.layer_norm = nn.LayerNorm(hidden_dim)
         # Self-Attention Layers
         self.attention_layers = nn.ModuleList()
         for _ in range(num_attention_layers):
             self.attention_layers.append(AttentionBlock(hidden_dim, num_heads, dropout))
 
-        # Final Linear Layer to project back to input dimensions
-        self.output_layer = nn.Linear(hidden_dim, input_channels)
-        #self.output_layer = nn.Conv1d(hidden_dim, input_channels, kernel_size=3, stride=1, padding=1)
+        # Final conv Layer to project back to input dimensions
+        self.output_layer = nn.Conv1d(hidden_dim, input_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
         # x: (batch_size, freq_bins, time_steps)
-        #x = self.input_layer(x)
-        #x = self.input_fn(x)
+        x = self.input_layer(x)
         # Convolutional Layers
-        #print("x.shape1", x.shape)
         for conv in self.conv_layers:
             x = conv(x)  # (batch_size, channels, time_steps)
-        #print("x.shape2", x.shape)
         # Prepare for Attention Layers
         x = x.transpose(1, 2)  # (batch_size, time_steps, channels)
-        #print("x.shape3", x.shape)
         x = self.tsfm_projection(x)
-        #print("x.shape4", x.shape)
-        #x = self.layer_norm(x)
-        #print("x.shape5", x.shape)
         # Attention Layers
         # Create causal mask
         seq_len = x.size(1)
         causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
         for attn in self.attention_layers:
             x = attn(x, causal_mask)
-        #print("x.shape5", x.shape)
-
-        #x = x.transpose(1, 2)
-
+        x = x.transpose(1, 2)
         # Final projection
         x = self.output_layer(x)  # (batch_size, time_steps, input_channels)
-        #print("x.shape7", x.shape)
-        # Permute back to (batch_size, input_channels, time_steps)
-        x = x.transpose(1, 2)
-        #print("x.shape7", x.shape)
         return x
 
 
@@ -129,7 +102,7 @@ if __name__ == '__main__':
     model = CleanSpecNet(**network_config).to(device)
     
     # Simulação de entrada de espectrograma
-    input_data = torch.randn(2, 601, 1024).to(device)  # (batch_size, freq_bins, time)
+    input_data = torch.randn(2, 513, 1024).to(device)  # (batch_size, freq_bins, time)
     
     output = model(input_data)
     print(f"Input shape: {input_data.shape}")

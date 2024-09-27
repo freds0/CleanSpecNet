@@ -44,8 +44,7 @@ class PairSpecDataset(Dataset):
                 data = f.readlines()  
 
         # Extract file names and corresponding labels
-        self.files = [line.strip().split("|")[0].replace("DUMMY", data_dir) for line in data]
-        #self.files = [os.path.join(data_dir, line.strip().split("|")[0]) for line in data]
+        self.files = [os.path.join(data_dir, line.strip().split("|")[0]) for line in data]
 
         # Initialize the AudioAugmenter with the provided augmentations, if any
         self.audio_augmenter = AudioAugmenter(augmentations) if augmentations else None
@@ -183,19 +182,24 @@ def collate_fn(batch):
     return noisy_batch, clean_batch
 
 
-def load_PairSpecDataset(data_dir, subset, train_metadata, test_metadata, crop_length_sec, batch_size, sample_rate,
+def load_PairSpecDataset(data_dir, train_metadata, test_metadata, crop_length_sec, batch_size, sample_rate,
                                n_fft, hop_length, win_length, power, augmentations=None, num_gpus=1):
     """
     Get dataloader with distributed sampling
     """
-    dataset = PairSpecDataset(data_dir=data_dir, subset=subset, train_metadata=train_metadata, test_metadata=test_metadata, crop_length_sec=crop_length_sec,
+    train_dataset = PairSpecDataset(data_dir=data_dir, subset='train', train_metadata=train_metadata, test_metadata=test_metadata, crop_length_sec=crop_length_sec,
                                     sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length,
                                     win_length=win_length, power=power, augmentations=augmentations)
+    
+    test_dataset = PairSpecDataset(data_dir=data_dir, subset='test', train_metadata=train_metadata, test_metadata=test_metadata, crop_length_sec=crop_length_sec,
+                                    sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length,
+                                    win_length=win_length, power=power, augmentations=augmentations)    
     kwargs = {"batch_size": batch_size, "num_workers": 4, "pin_memory": False, "drop_last": False}
 
-    dataloader = torch.utils.data.DataLoader(dataset, collate_fn=collate_fn, shuffle=True, **kwargs)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, collate_fn=collate_fn, shuffle=True, **kwargs)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, collate_fn=collate_fn, shuffle=True, **kwargs)
         
-    return dataloader
+    return train_dataloader, test_dataloader
 
 if __name__ == '__main__':
     import json
@@ -204,11 +208,9 @@ if __name__ == '__main__':
     trainset_config = config["trainset_config"]
     augmentations = config.get("augmentations", None)
 
-    trainloader = load_PairSpecDataset(**trainset_config, subset='train',
-                                             batch_size=2, augmentations=augmentations, num_gpus=1)
-    testloader = load_PairSpecDataset(**trainset_config, subset='test',
-                                            batch_size=2, augmentations=augmentations, num_gpus=1)
+    trainloader, testloader = load_PairSpecDataset(**trainset_config, batch_size=2, augmentations=augmentations, num_gpus=1)
     print("Data loaded")
+
     print(len(trainloader), len(testloader))
 
     for i, (noisy_spec, clean_spec) in enumerate(trainloader): 
@@ -217,5 +219,5 @@ if __name__ == '__main__':
         
         print(noisy_spec.shape)
         print(noisy_spec.max(), noisy_spec.min())
-        if i > 10:
+        if i > 3:
             break

@@ -1,9 +1,10 @@
 {   
     "network_config": {
-        "input_channels":601, 
+        "input_channels":513, 
         "num_conv_layers":5, 
         "kernel_size":4, 
         "stride":1,
+        "conv_hidden_dim": 64,
         "num_attention_layers":5, 
         "num_heads":8, 
         "hidden_dim":512, 
@@ -11,7 +12,7 @@
     },
     "train_config": {
         "exp_path": "cleanspecnet",
-        "checkpoint_path": "./checkpoints/60000.pkl",
+        "checkpoint_path": "./logs_training/cleanspecnet/checkpoint/10000.pkl",
         "log":{
             "directory": "./logs_training",
             "ckpt_iter": "max",
@@ -19,21 +20,21 @@
             "iters_per_valid": 250
         },
         "optimization":{
-            "n_iters": 250000,
-            "learning_rate": 1e-4,
+            "n_iters": 200000,
+            "learning_rate": 5e-5,
             "betas": [0.9, 0.999],
             "eps":1e-8,
             "weight_decay": 1e-5,
-            "max_norm": 5,
-            "batch_size_per_gpu": 16
+            "max_norm": 1e100,
+            "batch_size_per_gpu": 64
         }
     },
     "trainset_config": {
-        "data_dir": "../DATASETS/LJSpeech-1.1/wavs",
+        "data_dir": "../../DATASETS/LJSpeech-1.1/",
         "train_metadata": "./filelists/ljs_audio_text_train_filelist.txt",
         "test_metadata": "./filelists/ljs_audio_text_val_filelist.txt",
-        "crop_length_sec": 3,
-        "sample_rate": 24000,
+        "crop_length_sec": 50,
+        "sample_rate": 16000,
         "n_fft": 1024, 
         "hop_length": 256, 
         "win_length": 1024,

@@ -3,9 +3,12 @@ from dataset import load_PairSpecDataset
 from util import rescale, find_max_epoch, print_size
 from logger import Logger
 from util import LinearWarmupCosineDecay
+from util import prepare_directories_and_logger, save_checkpoint, load_checkpoint
+
 from model import CleanSpecNet
-from losses import l1_loss as loss_fn
-#from losses import cleanspecnet_official_loss as loss_fn
+#from losses import l1_loss as loss_fn
+from losses import cleanspecnet_loss as loss_fn
+
 import torch
 import torch.nn as nn
 import torchaudio
@@ -22,75 +25,38 @@ import argparse
 import random
 import json
 import os
-from torch.utils.tensorboard import SummaryWriter
-
-#loss_fn = nn.MSELoss()
 
 random.seed(0)
 torch.manual_seed(0)
 np.random.seed(0)
 
-def prepare_directories_and_logger(output_dir, log_dir, ckpt_dir, rank):
-    if rank == 0:
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir)
-            os.chmod(output_dir, 0o775)
 
-        if not os.path.isdir(log_dir):
-            os.makedirs(log_dir)
-            os.chmod(log_dir, 0o775)    
+import torch.nn.init as init
 
-        if not os.path.isdir(ckpt_dir):
-            os.makedirs(ckpt_dir)
-            os.chmod(ckpt_dir, 0o775)                        
-
-        logger = Logger(log_dir)
-    else:
-        logger = None
-    return logger
-
-def warm_start_model(checkpoint_path, model, ignore_layers):
-    assert os.path.isfile(checkpoint_path)
-    print("Warm starting model from checkpoint '{}'".format(checkpoint_path))
-    checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
-    model_dict = checkpoint_dict['state_dict']
-    if len(ignore_layers) > 0:
-        model_dict = {k: v for k, v in model_dict.items()
-                      if k not in ignore_layers}
-        dummy_dict = model.state_dict()
-        dummy_dict.update(model_dict)
-        model_dict = dummy_dict
-    model.load_state_dict(model_dict)
-    return model
-
-
-def load_checkpoint(checkpoint_path, model, optimizer):
-    assert os.path.isfile(checkpoint_path)
-    print("Loading checkpoint '{}'".format(checkpoint_path))
-    checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
-    #model.load_state_dict(checkpoint_dict['state_dict'], strict=False)
-    missing_keys, unexpected_keys = model.load_state_dict(checkpoint_dict['state_dict'], strict=False)
-
-    if len(missing_keys) > 0:
-        print("Missing keys:", missing_keys)
-    if len(unexpected_keys) > 0:
-        print("Unexpected keys:", unexpected_keys)
-            
-    optimizer.load_state_dict(checkpoint_dict['optimizer'])
-    learning_rate = checkpoint_dict['learning_rate']
-    iteration = checkpoint_dict['iteration']
-    print("Loaded checkpoint '{}' from iteration {}" .format(
-        checkpoint_path, iteration))
-    return model, optimizer, learning_rate, iteration
-
-
-def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
-    print("Saving model and optimizer state at iteration {} to {}".format(
-        iteration, filepath))
-    torch.save({'iteration': iteration,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'learning_rate': learning_rate}, filepath)
+def initialize_weights(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv1d):
+            # Conv layers
+            init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            # Linear layers
+            init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                init.zeros_(m.bias)
+        elif isinstance(m, nn.MultiheadAttention):
+            # MultiheadAttention
+            init.xavier_uniform_(m.in_proj_weight)
+            init.xavier_uniform_(m.out_proj.weight)
+            if m.in_proj_bias is not None:
+                init.zeros_(m.in_proj_bias)
+            if m.out_proj.bias is not None:
+                init.zeros_(m.out_proj.bias)
+        elif isinstance(m, nn.LayerNorm):
+            # LayerNorm
+            init.ones_(m.weight)
+            init.zeros_(m.bias)
 
 
 def validate(model, val_loader, iteration, trainset_config, logger, device):
@@ -110,16 +76,14 @@ def validate(model, val_loader, iteration, trainset_config, logger, device):
 
     with torch.no_grad():
 
-        for i, (x, y) in enumerate(val_loader):
+        for i, (x, y) in enumerate(val_loader):            
             x, y = x.to(device), y.to(device)
-
             # Forward pass
             y_pred = model(x)  # Assumindo que model retorna apenas y_pred
-
-            # Calcular a perda
+            # Calculate loss
             loss = loss_fn(y_pred, y)
 
-            # Reduzir a perda se estiver usando múltiplas GPUs
+            # Multiple GPUs
             #if distributed_run:
             #    reduced_val_loss = reduce_tensor(loss.data, n_gpus).item()
             #else:
@@ -211,11 +175,6 @@ def train(num_gpus, rank, group_name,
     log_directory = os.path.join(output_dir, 'logs')
     ckpt_dir = os.path.join(output_dir, 'checkpoint')
 
-    weight_decay = optimization["weight_decay"]
-    learning_rate = optimization["learning_rate"]
-    max_norm = optimization["max_norm"]
-    batch_size = optimization["batch_size_per_gpu"]
-
     logger = prepare_directories_and_logger(
         output_dir, log_directory, ckpt_dir, rank)
 
@@ -225,19 +184,10 @@ def train(num_gpus, rank, group_name,
 
     # load training data
     print('Loading training dataloader...')
-    trainloader = load_PairSpecDataset(**trainset_config, 
-                            subset='train',
-                            batch_size=batch_size, 
+    trainloader, testloader = load_PairSpecDataset(**trainset_config, 
+                            batch_size=optimization["batch_size_per_gpu"], 
                             num_gpus=num_gpus)
     
-    print('Data loaded')
-    
-    print('Loading val dataloader...')    
-    testloader = load_PairSpecDataset(**trainset_config, 
-                            subset='test',
-                            batch_size=batch_size, 
-                            num_gpus=num_gpus)
-
     print('Data loaded')
             
     # predefine model
@@ -249,8 +199,9 @@ def train(num_gpus, rank, group_name,
         model = apply_gradient_allreduce(model)
 
     # define optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=optimization["learning_rate"], betas=(optimization["betas"][0], optimization["betas"][1]), eps=optimization["eps"], weight_decay=optimization["weight_decay"])
 
+    # load checkpoint
     '''
     time0 = time.time()
     if log["ckpt_iter"] == 'max':
@@ -272,11 +223,13 @@ def train(num_gpus, rank, group_name,
             n_iter = iteration + 1                   
         except:
             print(f'No valid checkpoint model found at {checkpoint_path}, start training from initialization.')           
+    else:
 
+        initialize_weights(model)
     # define learning rate scheduler
     scheduler = LinearWarmupCosineDecay(
                     optimizer,
-                    lr_max=learning_rate,
+                    lr_max=optimization["learning_rate"],
                     n_iter=optimization["n_iters"],
                     iteration=n_iter,
                     divider=25,
@@ -285,10 +238,11 @@ def train(num_gpus, rank, group_name,
                 )
     # training 
     epoch = 1
+    global_step=0
     print('Starting training...')
-    while n_iter < optimization["n_iters"] + 1:
+    while global_step < optimization["n_iters"] + 1:
         # for each epoch
-        for noisy_spec, clean_spec in trainloader:             
+        for step, (noisy_spec, clean_spec) in enumerate(trainloader):
             noisy_spec = noisy_spec.to(device)  # Shape: (batch_size, freq_bins, time_steps)
             clean_spec = clean_spec.to(device)
 
@@ -296,37 +250,32 @@ def train(num_gpus, rank, group_name,
             optimizer.zero_grad()
             denoised_audio = model(noisy_spec)  # Output shape: (batch_size, freq_bins, time_steps)
             loss = loss_fn(clean_spec, denoised_audio)
-            loss.backward()     
-
-            if torch.isnan(loss).any():
-                print("Loss contains NaN, terminating training")
-                break
-
-            grad_norm = nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            loss.backward()            
+            grad_norm = nn.utils.clip_grad_norm_(model.parameters(), max_norm=optimization["max_norm"])
             scheduler.step()
             optimizer.step()
 
-            print("Epoch: {} \t iteration: {} \t\tloss: {:.7f}".format(epoch, n_iter, loss.item()), flush=True)
+            print(f"Epoch: {epoch:<5} step: {step:<6} global step {global_step:<7} loss: {loss.item():.7f}", flush=True)
 
             # output to log
-            if n_iter > 0 and n_iter % 10 == 0 and rank == 0:
+            if global_step > 0 and global_step % 10 == 0 and rank == 0:
                 # save to tensorboard
-                logger.add_scalar("Train/Train-Loss", loss.item(), n_iter)
-                logger.add_scalar("Train/Gradient-Norm", grad_norm, n_iter)
-                logger.add_scalar("Train/learning-rate", optimizer.param_groups[0]["lr"], n_iter)
+                logger.add_scalar("Train/Train-Loss", loss.item(), global_step)
+                logger.add_scalar("Train/Gradient-Norm", grad_norm, global_step)
+                logger.add_scalar("Train/learning-rate", optimizer.param_groups[0]["lr"], global_step)
 
-            if n_iter > 0 and n_iter % log["iters_per_valid"] == 0 and rank == 0:
-                validate(model, testloader, n_iter, trainset_config, logger, device)
+            if global_step > 0 and global_step % log["iters_per_valid"] == 0 and rank == 0:
+                validate(model, testloader, global_step, trainset_config, logger, device)
 
             # save checkpoint
-            if n_iter > 0 and n_iter % log["iters_per_ckpt"] == 0 and rank == 0:
-                checkpoint_name = '{}.pkl'.format(n_iter)
+            if global_step > 0 and global_step % log["iters_per_ckpt"] == 0 and rank == 0:
+                checkpoint_name = '{}.pkl'.format(global_step)
                 checkpoint_path = os.path.join(ckpt_dir, checkpoint_name)
-                save_checkpoint(model, optimizer, learning_rate, n_iter, checkpoint_path)
-                print('model at iteration %s is saved' % n_iter)
+                save_checkpoint(model, optimizer, optimizer.param_groups[0]["lr"], global_step, checkpoint_path)
+                print('model at iteration %s is saved' % global_step)
 
 
-            n_iter += 1
+            global_step += 1
 
         epoch += 1
 

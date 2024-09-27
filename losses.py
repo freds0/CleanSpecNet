@@ -12,50 +12,36 @@ from distutils.version import LooseVersion
 
 is_pytorch_17plus = LooseVersion(torch.__version__) >= LooseVersion("1.7")
 
-
-import torch
-import torch.nn.functional as F
-
-def cleanspecnet_official_loss(y, y_pred, hop_size=256, epsilon=1e-6):
+def cleanspecnet_loss(y, y_pred, hop_size=256, epsilon=1e-6):
     """
-    Calculates the custom loss as described.
-
-    Parameters:
-    - y: Ground truth tensor (target) of shape (batch_size, freq_bins, time_steps)
-    - y_pred: Model predicted tensor of shape (batch_size, freq_bins, time_steps)
-    - hop_size: Hop size of the spectrogram
-    - epsilon: Small value added for numerical stability to prevent NaN
-
-    Returns:
-    - loss: Loss value
+    Calculates the custom loss while preventing NaN values.
     """
-    # Frobenius norm (L2 norm) between y and y_pred
+    # Calculate the Frobenius norm between y and y_pred
     frobenius_norm = torch.norm(y - y_pred, p='fro')
-    #print("frobenius_norm:", frobenius_norm)
 
-    # Add epsilon to both y and y_pred to prevent division by zero
+    # Clamping to avoid division by zero
     y = torch.clamp(y, min=epsilon)
     y_pred = torch.clamp(y_pred, min=epsilon)
 
-    # Logarithm of the ratio between y and y_pred (avoiding division by zero)
-    log_term = torch.log(y / y_pred)
-    #print("log_term:", log_term)
+    # Calculate the logarithm of the ratio
+    ratio = y / y_pred
+    ratio = torch.clamp(ratio, min=epsilon, max=1e6)  # Avoid extreme values
+    log_term = torch.log(ratio)
+    log_term = torch.where(torch.isinf(log_term), torch.zeros_like(log_term), log_term)  # Handle infinities
     log_norm = torch.norm(log_term, p=1)
-    #print("log_norm:", log_norm)
 
-    # Spectrogram length (Tspec)
-    Tspec = y.shape[-1] // hop_size
-    #print("Tspec:", Tspec)
+    # Calculate Tspec ensuring it is at least 1
+    Tspec = max(y.shape[-1] // hop_size, 1)
 
-    # Frobenius norm of y (for normalization)
+    # Frobenius norm of y with handling for zero
     norm_y = torch.norm(y, p='fro')
-    #print("norm_y:", norm_y)
+    if norm_y == 0:
+        norm_y = epsilon
 
     # Final loss calculation
     loss = (frobenius_norm / norm_y) + (log_norm / Tspec)
 
     return loss
-
 
 
 def l1_loss(y, y_hat):
