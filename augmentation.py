@@ -7,7 +7,7 @@ import soundfile as sf
 
 from audiomentations import (
     Compose, Mp3Compression, AddGaussianSNR, AddBackgroundNoise,
-    PolarityInversion, LowPassFilter, HighPassFilter
+    PolarityInversion, LowPassFilter, HighPassFilter, ApplyImpulseResponse
 )
 
 class AudioAugmenter:
@@ -25,20 +25,13 @@ class AudioAugmenter:
             elif name == 'AddGaussianSNR':
                 aug_list.append(AddGaussianSNR(**params))
             elif name == 'AddBackgroundNoise':
-                # Handle 'sounds_path' separately as it's required
-                sounds_path = params.pop('sounds_path', None)
-                if sounds_path is None:
-                    raise ValueError("Parameter 'sounds_path' is required for AddBackgroundNoise")
-                aug_list.append(
-                    AddBackgroundNoise(
-                        sounds_path=sounds_path,
-                        **params
-                    )
-                )
+                aug_list.append(AddBackgroundNoise(**params))
             elif name == 'LowPassFilter':
                 aug_list.append(LowPassFilter(**params))
             elif name == 'HighPassFilter':
                 aug_list.append(HighPassFilter(**params))
+            elif name == 'ApplyImpulseResponse':
+                aug_list.append(ApplyImpulseResponse(**params))                
             else:
                 print(f"Warning: Unknown augmentation '{name}'")
         return Compose(aug_list)

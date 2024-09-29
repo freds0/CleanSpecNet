@@ -70,9 +70,18 @@ For data augmentation, a basic configuration is already included in `config.json
                     "max_cutoff_freq": 2000,
                     "p": 0.2
                 }
-            }
+            },
+            {
+                "name": "ApplyImpulseResponse",
+                "params": {
+                    "ir_path": "/path/to/sound_folder",
+                    "p": 0.2
+                }
+            }            
         ]  
 ```
+
+Check out the repository (room-impulse-responses)[https://github.com/RoyJames/room-impulse-responses] to download datasets for Room Impulse Responses
 
 ## Training
 

@@ -16,7 +16,7 @@ class PairSpecDataset(Dataset):
     """
 
     def __init__(self, data_dir='./dataset', subset='train', train_metadata='train.csv', 
-                 test_metadata='test.csv', crop_length_sec=0, sample_rate=24000, n_fft=1024, 
+                 test_metadata='test.csv', audio_min_sec=1.0, crop_length_sec=0, sample_rate=24000, n_fft=1024, 
                  hop_length=256, win_length=1024, power=1.0, augmentations=None):
         
         super(PairSpecDataset, self).__init__()
@@ -32,6 +32,7 @@ class PairSpecDataset(Dataset):
         )
         '''
         assert subset in ["train", "test"], "Subset must be 'train' or 'test'"
+        self.audio_min_sec = audio_min_sec
         self.crop_length_sec = crop_length_sec
         self.subset = subset
 
@@ -90,7 +91,8 @@ class PairSpecDataset(Dataset):
         
         # Load the audio file
         audio = self._load_audio_and_resample(filepath, self.sample_rate)
-        if type(audio) == bool and audio == False:
+        audio_len_sec = len(audio) / self.sample_rate
+        if type(audio) == bool and audio == False or (audio_len_sec < self.audio_min_sec):
             # If there's an error, try loading the next audio file
             return self.__getitem__((index + 1) % len(self))
 
@@ -182,18 +184,19 @@ def collate_fn(batch):
     return noisy_batch, clean_batch
 
 
-def load_PairSpecDataset(data_dir, train_metadata, test_metadata, crop_length_sec, batch_size, sample_rate,
+def load_PairSpecDataset(data_dir, train_metadata, test_metadata, audio_min_sec, crop_length_sec, batch_size, sample_rate,
                                n_fft, hop_length, win_length, power, augmentations=None, num_gpus=1):
     """
     Get dataloader with distributed sampling
     """
-    train_dataset = PairSpecDataset(data_dir=data_dir, subset='train', train_metadata=train_metadata, test_metadata=test_metadata, crop_length_sec=crop_length_sec,
-                                    sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length,
-                                    win_length=win_length, power=power, augmentations=augmentations)
-    
-    test_dataset = PairSpecDataset(data_dir=data_dir, subset='test', train_metadata=train_metadata, test_metadata=test_metadata, crop_length_sec=crop_length_sec,
-                                    sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length,
-                                    win_length=win_length, power=power, augmentations=augmentations)    
+    train_dataset = PairSpecDataset(data_dir=data_dir, subset='train', train_metadata=train_metadata, test_metadata=test_metadata, 
+                                    audio_min_sec=audio_min_sec, crop_length_sec=crop_length_sec, sample_rate=sample_rate, 
+                                    n_fft=n_fft, hop_length=hop_length, win_length=win_length, power=power, 
+                                    augmentations=augmentations)    
+    test_dataset = PairSpecDataset(data_dir=data_dir, subset='test', train_metadata=train_metadata, test_metadata=test_metadata,
+                                    audio_min_sec=audio_min_sec, crop_length_sec=crop_length_sec, sample_rate=sample_rate, 
+                                    n_fft=n_fft, hop_length=hop_length, win_length=win_length, power=power, 
+                                    augmentations=augmentations)
     kwargs = {"batch_size": batch_size, "num_workers": 4, "pin_memory": False, "drop_last": False}
 
     train_dataloader = torch.utils.data.DataLoader(train_dataset, collate_fn=collate_fn, shuffle=True, **kwargs)
