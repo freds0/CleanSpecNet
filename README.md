@@ -95,7 +95,7 @@ The ```$EXP``` variable can be any config name in ```./configs/```, such as ```c
 To perform finetuning, you can include the path to the checkpoint in config.json:
 
 ```
-"checkpoint_path": "./checkpoints/60000.pkl",
+"checkpoint_path": "./checkpoints/pretrained.pkl",
 ```
 
 and run the training:

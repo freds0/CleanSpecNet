@@ -211,7 +211,7 @@ def train(num_gpus, rank, group_name,
     '''
 
     # load checkpoint
-    n_iter = 0
+    global_step = 0
     if checkpoint_path is not None:
         try:
             model, optimizer, _learning_rate, iteration = load_checkpoint(
@@ -220,7 +220,7 @@ def train(num_gpus, rank, group_name,
             print('checkpoint model loaded successfully')        
             if False: #use_saved_learning_rate:
                 learning_rate = _learning_rate             
-            n_iter = iteration + 1                   
+            global_step = iteration + 1                   
         except:
             print(f'No valid checkpoint model found at {checkpoint_path}, start training from initialization.')           
     else:
@@ -231,14 +231,13 @@ def train(num_gpus, rank, group_name,
                     optimizer,
                     lr_max=optimization["learning_rate"],
                     n_iter=optimization["n_iters"],
-                    iteration=n_iter,
+                    iteration=global_step,
                     divider=25,
                     warmup_proportion=0.05,
                     phase=('linear', 'cosine'),
                 )
     # training 
     epoch = 1
-    global_step=0
     print('Starting training...')
     while global_step < optimization["n_iters"] + 1:
         # for each epoch
