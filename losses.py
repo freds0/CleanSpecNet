@@ -12,7 +12,7 @@ from distutils.version import LooseVersion
 
 is_pytorch_17plus = LooseVersion(torch.__version__) >= LooseVersion("1.7")
 
-def cleanspecnet_loss(y, y_pred, hop_size=256, epsilon=1e-6):
+def cleanspecnet_loss(y_pred, y, hop_size=256, epsilon=1e-6):
     """
     Calculates the custom loss while preventing NaN values.
     """
@@ -41,11 +41,11 @@ def cleanspecnet_loss(y, y_pred, hop_size=256, epsilon=1e-6):
     # Final loss calculation
     loss = (frobenius_norm / norm_y) + (log_norm / Tspec)
 
-    return loss
+    return loss + l1_loss(y_pred, y)
 
 
-def l1_loss(y, y_hat):
-    loss = F.l1_loss(y_hat, y, reduction='mean')
+def l1_loss(y_pred, y):
+    loss = F.l1_loss(y_pred, y, reduction='mean')
     return loss
 
 '''

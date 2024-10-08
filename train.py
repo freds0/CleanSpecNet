@@ -248,7 +248,12 @@ def train(num_gpus, rank, group_name,
             # back-propagation
             optimizer.zero_grad()
             denoised_audio = model(noisy_spec)  # Output shape: (batch_size, freq_bins, time_steps)
-            loss = loss_fn(clean_spec, denoised_audio)
+            loss = loss_fn(denoised_audio, clean_spec)
+            if num_gpus > 1:
+                reduced_loss = reduce_tensor(loss.data, num_gpus).item()
+            else:
+                reduced_loss = loss.item()   
+
             loss.backward()            
             grad_norm = nn.utils.clip_grad_norm_(model.parameters(), max_norm=optimization["max_norm"])
             scheduler.step()
@@ -259,7 +264,7 @@ def train(num_gpus, rank, group_name,
             # output to log
             if global_step > 0 and global_step % 10 == 0 and rank == 0:
                 # save to tensorboard
-                logger.add_scalar("Train/Train-Loss", loss.item(), global_step)
+                logger.add_scalar("Train/Train-Loss", reduced_loss, global_step)
                 logger.add_scalar("Train/Gradient-Norm", grad_norm, global_step)
                 logger.add_scalar("Train/learning-rate", optimizer.param_groups[0]["lr"], global_step)
 
