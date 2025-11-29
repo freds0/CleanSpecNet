@@ -1,6 +1,23 @@
-torch
-torchaudio
-librosa
-pydub
-matplotlib
-audiomentations
+# --- Core Deep Learning ---
+torch>=2.1.0
+torchaudio>=2.1.0
+pytorch-lightning>=2.2.0
+
+# --- Audio Processing ---
+librosa>=0.10.1
+soundfile>=0.12.1
+tqdm>=4.65.0
+
+# --- Visualization & Images ---
+matplotlib>=3.6.0
+Pillow>=9.0.0
+
+# --- Logging & Configuration ---
+tensorboard>=2.14.0
+wandb>=0.16.0
+PyYAML>=6.0
+
+# --- Metrics (Optional but recommended for validation) ---
+pesq>=0.0.4
+pystoi>=0.3.3
+numpy>=1.23.0

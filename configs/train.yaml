@@ -1,0 +1,84 @@
+# configs/config.yaml
+
+# PyTorch Lightning Trainer settings
+trainer:
+  accelerator: "auto"
+  devices: 1
+  max_epochs: 1000
+  # max_steps: 1000000
+  precision: "32-true" # Options: "32-true", "16-mixed", etc.
+  log_every_n_steps: 100
+  val_check_interval: 1.0 # Validate once per epoch (1.0) or partial (0.5)
+
+# CleanSpecNet Model Hyperparameters
+model:
+  lr: 0.0001
+  sample_rate: 16000 # For audio logging
+  # CleanSpecNet Architecture Parameters
+  input_channels: 513
+  num_conv_layers: 5
+  kernel_size: 4
+  stride: 1
+  hidden_dim: 512
+  num_attention_layers: 5
+  num_heads: 8
+  dropout: 0.1
+
+# DataModule settings for loading datasets
+data:
+  data_dir: "/home/fred/Projetos/DATASETS/VoiceBank-DEMAND-16k/"
+  train_list_path: "filelists/train.csv"
+  val_list_path: "filelists/test.csv"
+  test_list_path: "filelists/test.csv"
+  batch_size: 16 # Reduced default batch size to avoid OOM (adjust as needed)
+  num_workers: 4 # Increased workers for better data loading
+  segment_size: 8192
+  # Mel-spectrogram parameters
+  sampling_rate: 16000
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 513
+  f_min: 0
+  f_max: 8000
+  power: 1.0
+
+# Callback configuration
+callbacks:
+  best_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "val_loss"
+    dirpath: "logs/checkpoints/"
+    filename: "best-cleanspecnet-{epoch:02d}-{val_loss:.4f}"
+    save_top_k: 1
+    mode: "min"
+  
+  periodic_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    dirpath: "logs/checkpoints/"
+    filename: "epoch-{epoch:02d}"
+    every_n_epochs: 10
+    save_top_k: 3 # Keep the 3 best checkpoints from the periodic saves
+    save_last: true
+    # FIX: Added monitor and mode to resolve MisconfigurationException
+    monitor: "val_loss"
+    mode: "min"
+
+# Logger configuration
+# Options for 'choice': "tensorboard", "wandb", "both"
+logger:
+  choice: "tensorboard"
+
+  tensorboard:
+    _target_: pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: "logs"
+    name: "cleanspecnet"
+    default_hp_metric: false
+
+  wandb:
+    _target_: pytorch_lightning.loggers.WandbLogger
+    project: "CleanSpecNet-Project"
+    name: "cleanspecnet_run"
+    save_dir: "logs"
+    offline: false
+    log_model: true

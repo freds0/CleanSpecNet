@@ -1,253 +1,140 @@
-# Adapted from https://github.com/kan-bayashi/ParallelWaveGAN
-
-# Original Copyright 2019 Tomoki Hayashi
-#  MIT License (https://opensource.org/licenses/MIT)
-
-"""STFT-based Loss modules."""
-
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-
 from distutils.version import LooseVersion
 
 is_pytorch_17plus = LooseVersion(torch.__version__) >= LooseVersion("1.7")
 
-def cleanspecnet_loss(y_pred, y, hop_size=256, epsilon=1e-6):
-    """
-    Calculates the custom loss while preventing NaN values.
-    """
-    # Calculate the Frobenius norm between y and y_pred
-    frobenius_norm = torch.norm(y - y_pred, p='fro')
 
-    # Clamping to avoid division by zero
-    y = torch.clamp(y, min=epsilon)
-    y_pred = torch.clamp(y_pred, min=epsilon)
-
-    # Calculate the logarithm of the ratio
-    ratio = y / y_pred
-    ratio = torch.clamp(ratio, min=epsilon, max=1e6)  # Avoid extreme values
-    log_term = torch.log(ratio)
-    log_term = torch.where(torch.isinf(log_term), torch.zeros_like(log_term), log_term)  # Handle infinities
-    log_norm = torch.norm(log_term, p=1)
-
-    # Calculate Tspec ensuring it is at least 1
-    Tspec = max(y.shape[-1] // hop_size, 1)
-
-    # Frobenius norm of y with handling for zero
-    norm_y = torch.norm(y, p='fro')
-    if norm_y == 0:
-        norm_y = epsilon
-
-    # Final loss calculation
-    loss = (frobenius_norm / norm_y) + (log_norm / Tspec)
-
-    return loss + l1_loss(y_pred, y)
+def naive_loss_fn(clean_audio, denoised_audio, clean_spec, denoised_spec):
+    loss_audio = F.mse_loss(denoised_audio, clean_audio)
+    loss_spec = F.l1_loss(denoised_spec, clean_spec)
+    return loss_audio + loss_spec
 
 
-def l1_loss(y_pred, y):
-    loss = F.l1_loss(y_pred, y, reduction='mean')
-    return loss
+class CleanUnetLoss():
+    def __init__(self, ell_p, ell_p_lambda, stft_lambda, mrstftloss, **kwargs):
+        self.ell_p = ell_p
+        self.ell_p_lambda = ell_p_lambda
+        self.stft_lambda = stft_lambda
+        self.mrstftloss = mrstftloss
 
-'''
-class L1Loss():
-    """
-    Calculates the L1 loss between two tensors.
+    def __call__(self, clean_audio, denoised_audio):
+        B, C, L = clean_audio.shape
+        output_dic = {}
+        loss = 0.0
 
-        Parameters:
-        y_hat (torch.Tensor): Prediction tensor, shape (batch_size, freq_bins, time_steps).
-        y (torch.Tensor): Target tensor, shape (batch_size, freq_bins, time_steps).
+        # Reconstruction loss (L1 or L2)
+        if self.ell_p == 2:
+            ae_loss = F.mse_loss(denoised_audio, clean_audio)
+        elif self.ell_p == 1:
+            ae_loss = F.l1_loss(denoised_audio, clean_audio)
+        else:
+            raise NotImplementedError(f"ell_p={self.ell_p} is not supported. Use 1 (L1) or 2 (L2).")
 
-        Returns:
-        loss (torch.Tensor): Scalar value of the L1 loss.
-    """
-    def __init__(self):
-        super(L1Loss, self).__init__()
-    
-    def forward(self, y_hat, y):
-        loss = F.l1_loss(y_hat, y, reduction='mean')
-        return loss
-'''
+        loss += ae_loss * self.ell_p_lambda
+        output_dic["reconstruct"] = ae_loss.item() * self.ell_p_lambda
 
-def stft(x, fft_size, hop_size, win_length, window):
-    """Perform STFT and convert to magnitude spectrogram.
-    Args:
-        x (Tensor): Input signal tensor (B, T).
-        fft_size (int): FFT size.
-        hop_size (int): Hop size.
-        win_length (int): Window length.
-        window (str): Window function type.
-    Returns:
-        Tensor: Magnitude spectrogram (B, #frames, fft_size // 2 + 1).
+        # STFT-based losses
+        if self.stft_lambda > 0:
+            sc_loss, mag_loss = self.mrstftloss(denoised_audio.squeeze(1), clean_audio.squeeze(1))
+            loss += (sc_loss + mag_loss) * self.stft_lambda
+            output_dic["stft_sc"] = sc_loss.item() * self.stft_lambda
+            output_dic["stft_mag"] = mag_loss.item() * self.stft_lambda
 
-    """
-    if is_pytorch_17plus:
-        x_stft = torch.stft(
-            x, fft_size, hop_size, win_length, window, return_complex=False
-        )
-    else:
-        x_stft = torch.stft(x, fft_size, hop_size, win_length, window)
-    real = x_stft[..., 0]
-    imag = x_stft[..., 1]
-
-    # NOTE(kan-bayashi): clamp is needed to avoid nan or inf
-    return torch.sqrt(torch.clamp(real**2 + imag**2, min=1e-7)).transpose(2, 1)
+        return loss, output_dic
 
 
-class SpectralConvergenceLoss(torch.nn.Module):
-    """Spectral convergence loss module."""
+class CleanUNet2Loss:
+    def __init__(self, ell_p, ell_p_lambda, stft_lambda, mrstftloss, **kwargs):
+        self.cleanunet_loss = CleanUnetLoss(ell_p, ell_p_lambda, stft_lambda, mrstftloss)
 
-    def __init__(self):
-        """Initilize spectral convergence loss module."""
-        super(SpectralConvergenceLoss, self).__init__()
+    def __call__(self, clean_audio, denoised_audio):
+        loss_cleanunet, _ = self.cleanunet_loss(clean_audio, denoised_audio)
 
+        # ⚠️ Remover esta linha se já estiver usando L1 na CleanUnetLoss
+        loss_l1 = F.l1_loss(clean_audio, denoised_audio, reduction='mean')
+
+        return loss_cleanunet + loss_l1  # ou apenas `return loss_cleanunet`
+
+
+def stft(x, fft_size, shift_size, win_length, window):
+    window = window.to(x.device)
+    x_stft = torch.stft(
+        x, n_fft=fft_size, hop_length=shift_size, win_length=win_length,
+        window=window, return_complex=True, center=True
+    )
+    return x_stft
+
+
+class SpectralConvergenceLoss(nn.Module):
     def forward(self, x_mag, y_mag):
-        """Calculate forward propagation.
-
-        Args:
-            x_mag (Tensor): Magnitude spectrogram of predicted signal (B, #frames, #freq_bins).
-            y_mag (Tensor): Magnitude spectrogram of groundtruth signal (B, #frames, #freq_bins).
-        
-        Returns:
-            Tensor: Spectral convergence loss value.
-            
-        """
         return torch.norm(y_mag - x_mag, p="fro") / torch.norm(y_mag, p="fro")
 
 
-class LogSTFTMagnitudeLoss(torch.nn.Module):
-    """Log STFT magnitude loss module."""
-
-    def __init__(self):
-        """Initilize los STFT magnitude loss module."""
-        super(LogSTFTMagnitudeLoss, self).__init__()
-
+class LogSTFTMagnitudeLoss(nn.Module):
     def forward(self, x_mag, y_mag):
-        """Calculate forward propagation.
-
-        Args:
-            x_mag (Tensor): Magnitude spectrogram of predicted signal (B, #frames, #freq_bins).
-            y_mag (Tensor): Magnitude spectrogram of groundtruth signal (B, #frames, #freq_bins).
-        
-        Returns:
-            Tensor: Log STFT magnitude loss value.
-
-        """
-        return F.l1_loss(torch.log(y_mag), torch.log(x_mag))
+        return F.l1_loss(torch.log(torch.clamp(y_mag, min=1e-7)), torch.log(torch.clamp(x_mag, min=1e-7)))
 
 
-class STFTLoss(torch.nn.Module):
-    """STFT loss module."""
-
-    def __init__(
-        self, fft_size=1024, shift_size=120, win_length=600, window="hann_window", 
-        band="full"
-    ):
-        """Initialize STFT loss module."""
-        super(STFTLoss, self).__init__()
+class STFTLoss(nn.Module):
+    def __init__(self, fft_size=1024, shift_size=120, win_length=600, window="hann_window", band="full"):
+        super().__init__()
         self.fft_size = fft_size
         self.shift_size = shift_size
         self.win_length = win_length
-        self.band = band 
-
+        self.band = band
+        self.register_buffer("window", getattr(torch, window)(win_length))
         self.spectral_convergence_loss = SpectralConvergenceLoss()
         self.log_stft_magnitude_loss = LogSTFTMagnitudeLoss()
-        # NOTE(kan-bayashi): Use register_buffer to fix #223
-        self.register_buffer("window", getattr(torch, window)(win_length))
 
     def forward(self, x, y):
-        """Calculate forward propagation.
-
-        Args:
-            x (Tensor): Predicted signal (B, T).
-            y (Tensor): Groundtruth signal (B, T).
-
-        Returns:
-            Tensor: Spectral convergence loss value.
-            Tensor: Log STFT magnitude loss value.
-
-        """
-        x_mag = stft(x, self.fft_size, self.shift_size, self.win_length, self.window)
-        y_mag = stft(y, self.fft_size, self.shift_size, self.win_length, self.window)
+        x_mag = stft(x, self.fft_size, self.shift_size, self.win_length, self.window).abs()
+        y_mag = stft(y, self.fft_size, self.shift_size, self.win_length, self.window).abs()
 
         if self.band == "high":
-            freq_mask_ind = x_mag.shape[1] // 2  # only select high frequency bands
-            sc_loss  = self.spectral_convergence_loss(x_mag[:,freq_mask_ind:,:], y_mag[:,freq_mask_ind:,:])
-            mag_loss = self.log_stft_magnitude_loss(x_mag[:,freq_mask_ind:,:], y_mag[:,freq_mask_ind:,:])
-        elif self.band == "full":
-            sc_loss  = self.spectral_convergence_loss(x_mag, y_mag)
-            mag_loss = self.log_stft_magnitude_loss(x_mag, y_mag) 
-        else: 
-            raise NotImplementedError
+            freq_mask_ind = x_mag.shape[1] // 2
+            x_mag = x_mag[:, freq_mask_ind:, :]
+            y_mag = y_mag[:, freq_mask_ind:, :]
 
+        sc_loss = self.spectral_convergence_loss(x_mag, y_mag)
+        mag_loss = self.log_stft_magnitude_loss(x_mag, y_mag)
         return sc_loss, mag_loss
 
 
-class MultiResolutionSTFTLoss(torch.nn.Module):
-    """Multi resolution STFT loss module."""
-
+class MultiResolutionSTFTLoss(nn.Module):
     def __init__(
-        self, fft_sizes=[1024, 2048, 512], hop_sizes=[120, 240, 50], win_lengths=[600, 1200, 240],
-        window="hann_window", sc_lambda=0.1, mag_lambda=0.1, band="full"
+        self,
+        fft_sizes=[1024, 2048, 512],
+        hop_sizes=[120, 240, 50],
+        win_lengths=[600, 1200, 240],
+        window="hann_window",
+        sc_lambda=0.1,
+        mag_lambda=0.1,
+        band="full"
     ):
-        """Initialize Multi resolution STFT loss module.
-
-        Args:
-            fft_sizes (list): List of FFT sizes.
-            hop_sizes (list): List of hop sizes.
-            win_lengths (list): List of window lengths.
-            window (str): Window function type.
-            *_lambda (float): a balancing factor across different losses.
-            band (str): high-band or full-band loss
-
-        """
-        super(MultiResolutionSTFTLoss, self).__init__()
+        super().__init__()
         self.sc_lambda = sc_lambda
         self.mag_lambda = mag_lambda
-
         assert len(fft_sizes) == len(hop_sizes) == len(win_lengths)
-        self.stft_losses = torch.nn.ModuleList()
-        for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
-            self.stft_losses += [STFTLoss(fs, ss, wl, window, band)]
+        self.stft_losses = nn.ModuleList([
+            STFTLoss(fs, hs, wl, window, band)
+            for fs, hs, wl in zip(fft_sizes, hop_sizes, win_lengths)
+        ])
 
     def forward(self, x, y):
-        """Calculate forward propagation.
-
-        Args:
-            x (Tensor): Predicted signal (B, T) or (B, #subband, T).
-            y (Tensor): Groundtruth signal (B, T) or (B, #subband, T).
-
-        Returns:
-            Tensor: Multi resolution spectral convergence loss value.
-            Tensor: Multi resolution log STFT magnitude loss value.
-
-        """
         if len(x.shape) == 3:
-            x = x.view(-1, x.size(2))  # (B, C, T) -> (B x C, T)
-            y = y.view(-1, y.size(2))  # (B, C, T) -> (B x C, T)
+            x = x.view(-1, x.size(2))
+            y = y.view(-1, y.size(2))
+
         sc_loss = 0.0
         mag_loss = 0.0
-        for f in self.stft_losses:
-            sc_l, mag_l = f(x, y)
+        for stft_loss in self.stft_losses:
+            sc_l, mag_l = stft_loss(x, y)
             sc_loss += sc_l
             mag_loss += mag_l
 
-        sc_loss *= self.sc_lambda
-        sc_loss /= len(self.stft_losses)
-        mag_loss *= self.mag_lambda
-        mag_loss /= len(self.stft_losses)
+        sc_loss = sc_loss * self.sc_lambda / len(self.stft_losses)
+        mag_loss = mag_loss * self.mag_lambda / len(self.stft_losses)
 
         return sc_loss, mag_loss
-
-
-if __name__ == '__main__':
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    y = torch.randn(2, 513, 1024).to(device)  # (batch_size, freq_bins, time)
-    y_pred = torch.randn(2, 513, 1024).to(device)  # (batch_size, freq_bins, time)
-
-
-    loss = cleanspecnet_official_loss(y, y_pred, hop_size=256)
-    print(loss)
-
-
