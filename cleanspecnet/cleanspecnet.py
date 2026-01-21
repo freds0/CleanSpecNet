@@ -43,18 +43,18 @@ class CleanSpecNet(nn.Module):
     def __init__(self, input_channels=513, num_conv_layers=5, kernel_size=4, stride=1, conv_hidden_dim=64, hidden_dim=512, num_attention_layers=5, num_heads=8, dropout=0.1):
         super(CleanSpecNet, self).__init__()
 
-        self.input_layer = nn.Conv1d(input_channels, input_channels, kernel_size=3, stride=1, padding=1)
-        # Convolutional Layers
-        conv_input_channels = input_channels
+        # Conv1x1 for immediate projection (input_channels -> conv_hidden_dim)
+        self.input_layer = nn.Conv1d(input_channels, conv_hidden_dim, kernel_size=1, stride=1, padding=0)
+
+        # Convolutional Layers (fixed input at conv_hidden_dim)
         self.conv_layers = nn.ModuleList()
         for _ in range(num_conv_layers):
             self.conv_layers.append(nn.Sequential(
-                nn.Conv1d(conv_input_channels, conv_hidden_dim, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2),
+                nn.Conv1d(conv_hidden_dim, conv_hidden_dim, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2),
                 nn.ReLU(),
                 nn.Conv1d(conv_hidden_dim, conv_hidden_dim * 2, kernel_size=kernel_size, stride=stride, padding=1),
                 nn.GLU(dim=1)
             ))
-            conv_input_channels = conv_hidden_dim
 
         self.tsfm_projection = nn.Linear(conv_hidden_dim, hidden_dim)
 
@@ -63,8 +63,8 @@ class CleanSpecNet(nn.Module):
         for _ in range(num_attention_layers):
             self.attention_layers.append(AttentionBlock(hidden_dim, num_heads, dropout))
 
-        # Final conv Layer to project back to input dimensions
-        self.output_layer = nn.Conv1d(hidden_dim, input_channels, kernel_size=3, stride=1, padding=1)
+        # Conv1x1 to project back to input_channels
+        self.output_layer = nn.Conv1d(hidden_dim, input_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
         # x: (batch_size, freq_bins, time_steps)
@@ -87,7 +87,7 @@ class CleanSpecNet(nn.Module):
         return x
 
 
-# Exemplo de uso:
+# Usage example:
 if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -97,13 +97,13 @@ if __name__ == '__main__':
         data = f.read()
     config = json.loads(data)
 
-    network_config = config["network_config"] 
-    
+    network_config = config["network_config"]
+
     model = CleanSpecNet(**network_config).to(device)
-    
-    # Simulação de entrada de espectrograma
+
+    # Simulated spectrogram input
     input_data = torch.randn(2, 513, 1024).to(device)  # (batch_size, freq_bins, time)
-    
+
     output = model(input_data)
     print(f"Input shape: {input_data.shape}")
     print(f"Output shape: {output.shape}")

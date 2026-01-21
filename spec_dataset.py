@@ -1,4 +1,4 @@
-# spec_dataset.py (Corrigido)
+# spec_dataset.py
 
 import torch
 import torchaudio
@@ -8,8 +8,9 @@ from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 import torchaudio.transforms as T
 
+
 def load_wav(full_path, target_sr):
-    """Carrega um áudio, normaliza, e garante que seja mono."""
+    """Loads audio, normalizes it, and ensures it is mono."""
     data, sampling_rate = torchaudio.load(full_path, normalize=True)
     if sampling_rate != target_sr:
         resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=target_sr)
@@ -19,31 +20,31 @@ def load_wav(full_path, target_sr):
     return data, target_sr
 
 def get_dataset_filelist(filelist_path):
-    """Lê o arquivo de lista e retorna uma lista de tuplas (clean_path, noisy_path)."""
+    """Reads the filelist and returns a list of tuples (clean_path, noisy_path)."""
     with open(filelist_path, 'r', encoding='utf-8') as f:
         filepaths = [line.strip().split('|') for line in f.readlines() if '|' in line]
     return filepaths
 
 def custom_collate_fn(batch):
     """
-    Agrupa e aplica padding aos espectrogramas de tamanhos diferentes.
+    Groups and pads spectrograms of different sizes.
     """
     batch = [b for b in batch if b is not None]
     if not batch:
-        # Retorna um lote vazio se todos os itens falharam
+        # Return empty batch if all items failed
         return torch.empty(0), torch.empty(0)
 
     noisy_specs, clean_specs = zip(*batch)
 
-    # Transpõe para (Tempo, Frequência) para o padding
+    # Transpose to (Time, Frequency) for padding
     noisy_specs_transposed = [s.T for s in noisy_specs]
     clean_specs_transposed = [s.T for s in clean_specs]
 
-    # Aplica padding
+    # Apply padding
     noisy_specs_padded = pad_sequence(noisy_specs_transposed, batch_first=True, padding_value=0.0)
     clean_specs_padded = pad_sequence(clean_specs_transposed, batch_first=True, padding_value=0.0)
 
-    # Transpõe de volta para o formato esperado (Batch, Frequência, Tempo)
+    # Transpose back to expected format (Batch, Frequency, Time)
     return noisy_specs_padded.permute(0, 2, 1), clean_specs_padded.permute(0, 2, 1)
 
 class MelDataset(Dataset):
@@ -58,33 +59,14 @@ class MelDataset(Dataset):
         
         if shuffle:
             random.shuffle(self.audio_files)
-        
-        # --- LÓGICA SIMPLIFICADA ---
-        '''
-        # Cria a transformação de Mel-espectrograma diretamente
-        self.spectrogram_transform = torch.nn.Sequential(
-            T.MelSpectrogram(
-                sample_rate=sampling_rate,
-                n_fft=n_fft,
-                hop_length=hop_length,
-                win_length=win_length,
-                n_mels=n_mels,
-                f_min=f_min,
-                f_max=f_max,
-                power=power
-            ),
-            T.AmplitudeToDB()
-        )
-        '''
+
+        # Spectrogram transform
         self.spectrogram_transform = T.Spectrogram(
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
             power=power
         )
-
-
-    # __len__ e __getitem__ permanecem os mesmos da versão anterior
     def __len__(self):
         return len(self.audio_files)
 
@@ -113,5 +95,5 @@ class MelDataset(Dataset):
 
             return noisy_spec, clean_spec
         except Exception as e:
-            print(f"AVISO: Erro ao carregar o arquivo no índice {index} ({noisy_path_rel}): {e}. Pulando.")
+            print(f"WARNING: Error loading file at index {index} ({noisy_path_rel}): {e}. Skipping.")
             return None

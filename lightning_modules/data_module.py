@@ -1,31 +1,35 @@
-# lightning_modules/data_module.py (Corrigido)
+# lightning_modules/data_module.py
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from spec_dataset import MelDataset, get_dataset_filelist, custom_collate_fn
 
+
 class CleanSpecNetDataModule(pl.LightningDataModule):
-    # __init__ agora aceita todos os parâmetros do seu config.yaml
-    def __init__(self, data_dir: str, train_list_path: str, val_list_path: str, test_list_path: str, 
-                 batch_size: int, num_workers: int, segment_size: int, n_fft: int, n_mels: int, 
+    """
+    PyTorch Lightning DataModule for CleanSpecNet training.
+    Handles data loading for train, validation, and test splits.
+    """
+
+    def __init__(self, data_dir: str, train_list_path: str, val_list_path: str, test_list_path: str,
+                 batch_size: int, num_workers: int, segment_size: int, n_fft: int, n_mels: int,
                  hop_length: int, win_length: int, sampling_rate: int, f_min: int, f_max: int, power: float, **kwargs):
         super().__init__()
-        # Salva todos os parâmetros em self.hparams para fácil acesso
+        # Save all parameters to self.hparams for easy access
         self.save_hyperparameters()
 
     def setup(self, stage: str = None):
-        # Agrupa todos os parâmetros necessários para o MelDataset
-        # Esta lista agora está completa
+        # Group all required parameters for MelDataset
         self.dataset_kwargs = {
             "segment_size": self.hparams.segment_size,
             "n_fft": self.hparams.n_fft,
             "n_mels": self.hparams.n_mels,
-            "hop_length": self.hparams.hop_length, # 👈 Adicionado
-            "win_length": self.hparams.win_length, # 👈 Adicionado
+            "hop_length": self.hparams.hop_length,
+            "win_length": self.hparams.win_length,
             "sampling_rate": self.hparams.sampling_rate,
             "f_min": self.hparams.f_min,
             "f_max": self.hparams.f_max,
-            "power": self.hparams.power             # 👈 Adicionado
+            "power": self.hparams.power
         }
 
         if stage == "fit" or stage is None:

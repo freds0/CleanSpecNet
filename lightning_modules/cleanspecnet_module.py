@@ -7,8 +7,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torchaudio.transforms as T
 
 import matplotlib
-# Define o backend não interativo. Deve ser feito ANTES de importar pyplot.
-matplotlib.use('Agg') 
+# Set non-interactive backend. Must be done BEFORE importing pyplot.
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import io
@@ -16,37 +16,38 @@ import numpy as np
 from PIL import Image
 
 from cleanspecnet.cleanspecnet import CleanSpecNet
+from losses import CleanSpecNetLoss
 
-# --- FUNÇÃO AUXILIAR PARA PLOTAR ESPECTROGRAMAS COLORIDOS ---
+# --- HELPER FUNCTION TO PLOT COLORED SPECTROGRAMS ---
 def plot_spectrogram_to_tensor(spectrogram):
     """
-    Converte um tensor de espectrograma 2D em um tensor de imagem RGB
-    usando um mapa de cores para visualização no TensorBoard.
+    Converts a 2D spectrogram tensor to an RGB image tensor
+    using a colormap for TensorBoard visualization.
     """
-    # Normaliza o espectrograma para o range [0, 1] para melhor visualização
-    # Isso evita que imagens fiquem muito escuras ou claras demais
+    # Normalize spectrogram to [0, 1] range for better visualization
+    # This prevents images from being too dark or too bright
     spec_min = spectrogram.min()
     spec_max = spectrogram.max()
     if spec_max > spec_min:
         spectrogram = (spectrogram - spec_min) / (spec_max - spec_min)
-    
+
     fig, ax = plt.subplots(1, 1, figsize=(8, 2))
-    # Usa o mapa de cores 'viridis', comum para espectrogramas
+    # Use 'viridis' colormap, common for spectrograms
     im = ax.imshow(spectrogram, cmap='viridis', aspect='auto', origin='lower')
     ax.axis('off')
     plt.tight_layout(pad=0)
-    
-    # Salva a figura em um buffer de memória em vez de um arquivo
+
+    # Save figure to memory buffer instead of file
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
     plt.close(fig)
     buf.seek(0)
-    
-    # Lê a imagem do buffer e converte para o formato RGB
+
+    # Read image from buffer and convert to RGB format
     image = Image.open(buf).convert('RGB')
     image_np = np.array(image)
-    
-    # Converte de (Altura, Largura, Canais) para (Canais, Altura, Largura) para o TensorBoard
+
+    # Convert from (Height, Width, Channels) to (Channels, Height, Width) for TensorBoard
     return torch.from_numpy(image_np).permute(2, 0, 1)
 
 class CleanSpecNetLightningModule(pl.LightningModule):
@@ -65,13 +66,13 @@ class CleanSpecNetLightningModule(pl.LightningModule):
             dropout=self.hparams.dropout
         )
         
-        self.criterion = torch.nn.L1Loss()
-        
-        # Cria a instância do GriffinLim usando os hparams
+        self.criterion = CleanSpecNetLoss()
+
+        # Create GriffinLim instance using hparams
         self.griffin_lim = T.GriffinLim(
             n_fft=self.hparams.n_fft,
             hop_length=self.hparams.hop_length,
-            power=1.0 # Assumindo espectrograma de magnitude
+            power=1.0  # Assuming magnitude spectrogram
         )
 
     def forward(self, spectrogram):
@@ -95,18 +96,18 @@ class CleanSpecNetLightningModule(pl.LightningModule):
 
         if batch_idx == 0:
             tensorboard = self.logger.experiment
-            
-            # Pega a primeira amostra e move para a CPU para plotagem
+
+            # Get first sample and move to CPU for plotting
             noisy_sample_spec = noisy_spec[0].cpu()
             clean_sample_spec = clean_spec[0].cpu()
             enhanced_sample_spec = enhanced_spec[0].cpu()
 
-            # --- Log das Imagens Coloridas ---
+            # --- Log Colored Images ---
             tensorboard.add_image("Val_Spectrogram/Input", plot_spectrogram_to_tensor(noisy_sample_spec), self.current_epoch)
             tensorboard.add_image("Val_Spectrogram/Output", plot_spectrogram_to_tensor(enhanced_sample_spec), self.current_epoch)
             tensorboard.add_image("Val_Spectrogram/Target", plot_spectrogram_to_tensor(clean_sample_spec), self.current_epoch)
 
-            # --- Log dos Áudios ---
+            # --- Log Audio Samples ---
             self.griffin_lim.to(self.device)
             noisy_audio = self.griffin_lim(noisy_sample_spec.to(self.device))
             enhanced_audio = self.griffin_lim(enhanced_sample_spec.to(self.device))

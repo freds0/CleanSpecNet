@@ -1,18 +1,35 @@
+"""
+Audio Quality Metrics Module
+
+This module provides objective audio quality metrics including:
+- PESQ (Perceptual Evaluation of Speech Quality)
+- STOI (Short-Time Objective Intelligibility)
+- SI-SDR (Scale-Invariant Signal-to-Distortion Ratio)
+"""
 
 import os
 import argparse
 from glob import glob
 from os.path import join, basename, isdir
-import torch, torchaudio
+import torch
+import torchaudio
 from torchaudio.functional import resample
 from torch.nn.functional import pad
 from tqdm import tqdm
-#from torchaudio.pipelines import SQUIM_OBJECTIVE
 
 from pesq import pesq
 from pystoi import stoi
 
+
 class ObjectiveMetricsPredictor:
+    """
+    Computes objective audio quality metrics between clean and distorted audio.
+
+    Supported metrics:
+        - PESQ: Perceptual Evaluation of Speech Quality (wideband mode)
+        - STOI: Short-Time Objective Intelligibility
+        - SI-SDR: Scale-Invariant Signal-to-Distortion Ratio
+    """
     def __init__(self, device=None):        
         self.device = device
         if self.device is None:
@@ -21,6 +38,17 @@ class ObjectiveMetricsPredictor:
         #self.objective_predictor.eval()
 
     def si_snr(self, estimate, reference, epsilon=1e-8):
+        """
+        Compute Scale-Invariant Signal-to-Noise Ratio (SI-SNR).
+
+        Args:
+            estimate: Estimated/enhanced signal tensor
+            reference: Clean reference signal tensor
+            epsilon: Small value to avoid division by zero
+
+        Returns:
+            SI-SNR value in dB
+        """
         estimate = estimate - estimate.mean()
         reference = reference - reference.mean()
         reference_pow = reference.pow(2).mean(axis=1, keepdim=True)
@@ -39,8 +67,8 @@ class ObjectiveMetricsPredictor:
         si_snr = 10 * torch.log10(reference_pow) - 10 * torch.log10(error_pow)
         return si_snr.item()
 
-
-    def _load_file(self, filepath: str)->(torch.Tensor, int):
+    def _load_file(self, filepath: str) -> (torch.Tensor, int):
+        """Load audio file and resample to 16kHz if necessary."""
         try:
             waveform, sr = torchaudio.load(filepath)
             assert sr >= 16000, "Sample rate must be at least 16kHz"                
@@ -102,7 +130,7 @@ class ObjectiveMetricsPredictor:
         }
 
     def _collate_fn(self, batch):
-        # pad sequences to have same length
+        """Pad sequences to have the same length for batching."""
         batch = [item.squeeze() for item in batch if item is not None]
         max_length = max([item.shape[0] for item in batch])
         batch = [pad(item, (0, max_length - item.shape[0])) for item in batch]

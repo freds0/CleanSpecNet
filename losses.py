@@ -12,6 +12,43 @@ def naive_loss_fn(clean_audio, denoised_audio, clean_spec, denoised_spec):
     return loss_audio + loss_spec
 
 
+class CleanSpecNetLoss(nn.Module):
+    """
+    Loss function for CleanSpecNet based on CleanUNet 2 paper.
+
+    Minimizes L1 distance between log-magnitude spectrograms:
+    L_spec = (1/T_spec) * || log(1 + y) - log(1 + y_hat) ||_1
+
+    Where y is the target (clean) spectrogram magnitude and y_hat is the predicted.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, clean_spec, predicted_spec):
+        """
+        Args:
+            clean_spec: Target clean spectrogram magnitude (B, F, T)
+            predicted_spec: Predicted spectrogram magnitude (B, F, T)
+
+        Returns:
+            L1 loss between log-compressed spectrograms, normalized by T_spec
+        """
+        # Apply log compression: log(1 + x)
+        log_clean = torch.log1p(clean_spec)
+        log_predicted = torch.log1p(predicted_spec)
+
+        # L1 loss normalized by time steps (T_spec)
+        # F.l1_loss with reduction='mean' divides by all elements (B * F * T)
+        # To match the paper's (1/T_spec), we use sum over freq and mean over time
+        T_spec = clean_spec.size(-1)
+        loss = torch.sum(torch.abs(log_clean - log_predicted)) / T_spec
+
+        # Normalize by batch size as well for stable training
+        loss = loss / clean_spec.size(0)
+
+        return loss
+
+
 class CleanUnetLoss():
     def __init__(self, ell_p, ell_p_lambda, stft_lambda, mrstftloss, **kwargs):
         self.ell_p = ell_p

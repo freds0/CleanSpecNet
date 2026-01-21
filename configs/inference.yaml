@@ -1,17 +1,17 @@
 # configs/inference_config.yaml
 
-# Parâmetros da Inferência
+# Inference Parameters
 inference_params:
   input_dir: "/home/fred/Projetos/DATASETS/VoiceBank-DEMAND-16k/test/noisy/"
   output_dir: "denoised_results_specnet"
-  checkpoint_path: "logs/checkpoints/last.ckpt" # Altere para o seu melhor checkpoint
+  checkpoint_path: "logs/checkpoints/last.ckpt"  # Change to your best checkpoint
   cpu: false
 
-# Parâmetros do Modelo (necessários para instanciar o LightningModule)
+# Model Parameters (required to instantiate the LightningModule)
 model_hparams:
   lr: 0.0001
   sample_rate: 16000
-  # Arquitetura do CleanSpecNet
+  # CleanSpecNet Architecture
   input_channels: 513
   num_conv_layers: 5
   kernel_size: 4
@@ -21,7 +21,7 @@ model_hparams:
   num_heads: 8
   dropout: 0.1
 
-# Parâmetros de áudio para pré-processamento
+# Audio parameters for preprocessing
 audio_params:
   target_sample_rate: 16000
   n_fft: 1024

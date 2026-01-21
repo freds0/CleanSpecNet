@@ -4,6 +4,7 @@ from argparse import Namespace
 import logging
 import copy
 import os
+from datetime import datetime
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -63,6 +64,10 @@ def _create_single_logger(cfg: dict):
         return TensorBoardLogger(**config_copy)
     
     elif "WandbLogger" in target:
+        # Add timestamp to run name if specified
+        if "name" in config_copy:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            config_copy["name"] = f"{config_copy['name']}_{timestamp}"
         logger.info("Instantiating WandbLogger.")
         return WandbLogger(**config_copy)
     
