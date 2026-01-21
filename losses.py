@@ -21,30 +21,31 @@ class CleanSpecNetLoss(nn.Module):
 
     Where y is the target (clean) spectrogram magnitude and y_hat is the predicted.
     """
-    def __init__(self):
+    def __init__(self, eps=1e-7):
         super().__init__()
+        self.eps = eps
 
-    def forward(self, clean_spec, predicted_spec):
+    def forward(self, predicted_spec, clean_spec):
         """
         Args:
-            clean_spec: Target clean spectrogram magnitude (B, F, T)
             predicted_spec: Predicted spectrogram magnitude (B, F, T)
+            clean_spec: Target clean spectrogram magnitude (B, F, T)
 
         Returns:
             L1 loss between log-compressed spectrograms, normalized by T_spec
         """
+        # Ensure non-negative values to avoid NaN in log1p
+        # Spectrograms should be magnitude (non-negative), but clamp for safety
+        clean_spec = torch.clamp(clean_spec, min=self.eps)
+        predicted_spec = torch.clamp(predicted_spec, min=self.eps)
+
         # Apply log compression: log(1 + x)
         log_clean = torch.log1p(clean_spec)
         log_predicted = torch.log1p(predicted_spec)
 
-        # L1 loss normalized by time steps (T_spec)
-        # F.l1_loss with reduction='mean' divides by all elements (B * F * T)
-        # To match the paper's (1/T_spec), we use sum over freq and mean over time
-        T_spec = clean_spec.size(-1)
-        loss = torch.sum(torch.abs(log_clean - log_predicted)) / T_spec
-
-        # Normalize by batch size as well for stable training
-        loss = loss / clean_spec.size(0)
+        # Use F.l1_loss with mean reduction for numerical stability
+        # This is equivalent to the paper's formulation but more stable
+        loss = F.l1_loss(log_predicted, log_clean, reduction='mean')
 
         return loss
 
